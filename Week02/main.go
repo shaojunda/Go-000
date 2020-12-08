@@ -1,10 +1,8 @@
 package main
 
 import (
-	"./internal/db"
 	"./internal/service"
 	"fmt"
-	"github.com/pkg/errors"
 )
 
 /*
@@ -16,11 +14,7 @@ func main() {
 	svc := service.New()
 	user, err := svc.GetUser(1)
 	if err != nil {
-		if errors.Is(err, db.ErrRecordNotFound) {
-			fmt.Println("record not found")
-		} else {
-			fmt.Printf("error: %+v\n", err)
-		}
+		fmt.Printf("error: %+v\n", err)
 	} else {
 		fmt.Printf("user: %+v\n", user)
 	}
