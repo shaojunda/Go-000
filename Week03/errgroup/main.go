@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"golang.org/x/sync/errgroup"
 	"log"
@@ -14,41 +15,35 @@ import (
 )
 
 func main() {
-	c := make(chan struct{})
-	g, ctx := errgroup.WithContext(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	g, gCtx := errgroup.WithContext(ctx)
 
 	// random cancel
-	randomCancel(c)
+	randomCancel(ctx, cancel)
 
 	// start walking server
 	g.Go(func() error {
-		return startWalkingServer(c)
+		return startWalkingServer(gCtx)
 	})
 
 	// start eating server
 	g.Go(func() error {
-		return startEatingServer(c)
+		return startEatingServer(gCtx)
 	})
 
 	// start sleeping server
 	g.Go(func() error {
-		return startSleepingServer(c)
+		return startSleepingServer(gCtx)
 	})
 
 	// start bang server
 	g.Go(func() error {
-		return startBangServer(c)
+		return startBangServer(gCtx)
 	})
-	listenSig(c)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				countdown(10)
-				log.Println("All services are closed successfully.")
-			}
-		}
-	}()
+
+	g.Go(func() error {
+		return listenSig(ctx, cancel)
+	})
 
 	err := g.Wait()
 
@@ -57,17 +52,29 @@ func main() {
 	} else {
 		fmt.Printf("group error %+v", err)
 	}
-}
-
-func countdown(seconds int) {
-	tick := time.Tick(1 * time.Second)
-	for countdown := seconds; countdown > 0; countdown-- {
-		fmt.Println(countdown)
-		<-tick
+	for {
+		select {
+		case <-ctx.Done():
+			countdown(context.Background(), 10)
+			log.Println("All services are closed successfully.")
+			return
+		}
 	}
 }
 
-func startBangServer(c chan struct{}) error {
+func countdown(ctx context.Context, seconds int) {
+	tick := time.Tick(1 * time.Second)
+	for countdown := seconds; countdown > 0; countdown-- {
+		fmt.Println(countdown)
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick:
+		}
+	}
+}
+
+func startBangServer(ctx context.Context) error {
 	m := &http.ServeMux{}
 	s := http.Server{Addr: ":8093", Handler: m}
 	log.Println("bang server listen on 8093")
@@ -77,24 +84,34 @@ func startBangServer(c chan struct{}) error {
 		if err != nil {
 			log.Fatalf("bang error: %+v", err)
 		}
-		c <- struct{}{}
-		timeout, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		timeout, cancel := context.WithTimeout(ctx, 1*time.Second)
 		defer cancel()
-
 		s.Shutdown(timeout)
 	})
+	go func() {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Println("bang server panic %+")
+			}
+		}()
+		<-ctx.Done()
+		log.Println("close signal received by bang server.")
+		timeout, cancel := context.WithTimeout(ctx, 1*time.Second)
+		defer cancel()
+		s.Shutdown(timeout)
+	}()
 
 	return s.ListenAndServe()
 }
 
-func startSleepingServer(c chan struct{}) error {
+func startSleepingServer(ctx context.Context) error {
 	m := &http.ServeMux{}
 	s := http.Server{Addr: ":8092", Handler: m}
 	m.HandleFunc("/sleeping", sleepHandler)
 	log.Println("sleeping server listen on 8092")
 
 	go func() {
-		<-c
+		<-ctx.Done()
 		log.Println("close signal received by sleeping server.")
 		timeout, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer func() {
@@ -111,14 +128,14 @@ func startSleepingServer(c chan struct{}) error {
 	return s.ListenAndServe()
 }
 
-func startEatingServer(c chan struct{}) error {
+func startEatingServer(ctx context.Context) error {
 	m := &http.ServeMux{}
 	s := http.Server{Addr: ":8091", Handler: m}
 	m.HandleFunc("/eating", eatHandler)
 	log.Println("eat server listen on 8091")
 
 	go func() {
-		<-c
+		<-ctx.Done()
 		log.Println("close signal received by eating server.")
 		timeout, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		defer func() {
@@ -135,14 +152,14 @@ func startEatingServer(c chan struct{}) error {
 	return s.ListenAndServe()
 }
 
-func startWalkingServer(c chan struct{}) error {
+func startWalkingServer(ctx context.Context) error {
 	m := &http.ServeMux{}
 	s := http.Server{Addr: ":8090", Handler: m}
 	m.HandleFunc("/walking", walkHandler)
 	log.Println("walk server listen on 8090")
 
 	go func() {
-		<-c
+		<-ctx.Done()
 		log.Println("close signal received by walk server.")
 		timeout, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer func() {
@@ -159,12 +176,12 @@ func startWalkingServer(c chan struct{}) error {
 	return s.ListenAndServe()
 }
 
-func randomCancel(c chan struct{}) {
+func randomCancel(ctx context.Context, cancel context.CancelFunc) {
 	go func() {
 		n := rand.Intn(15) + 1
 		log.Println("random number is ", n)
-		countdown(n)
-		c <- struct{}{}
+		countdown(ctx, n)
+		cancel()
 	}()
 }
 
@@ -189,21 +206,16 @@ func sleepHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func listenSig(c chan struct{}) {
+func listenSig(ctx context.Context, cancel context.CancelFunc) error {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-
-	go func() {
-		defer func() {
-			if err := recover(); err != nil {
-				log.Print(err)
-			}
-		}()
-
-		si := <- sig
-		log.Println("Got signal :", si)
-		if c != nil {
-			c <- struct{}{}
-		}
-	}()
+	select {
+	case <-sig:
+		log.Printf("cancel sig received.")
+		cancel()
+		return errors.New("cancel sig received")
+	case <-ctx.Done():
+		log.Printf("context done.")
+		return errors.New("cancel sig received")
+	}
 }
