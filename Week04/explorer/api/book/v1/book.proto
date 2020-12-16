@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package book.v1;
+option go_package = ".;v1";
+
+message Book {
+  string name = 1;
+  string author = 2;
+  string publisher = 3;
+  string price = 4;
+  string url = 5;
+}
+
+message SearchBookRequest {
+  string query_string = 1;
+}
+
+message SearchBookResponse {
+  string url = 1;
+  string title = 2;
+  repeated Book books = 3;
+}
+
+message CreateBookRequest {
+  string name = 1;
+  string author = 2;
+  string publisher = 3;
+  string price = 4;
+  string url = 5;
+}
+
+message CreateBookResponse {
+  Book book = 1;
+}
+
+service BookService {
+  rpc SearchBook (SearchBookRequest) returns (SearchBookResponse);
+  rpc CreateBook (CreateBookRequest) returns (CreateBookResponse);
+}
