@@ -26,5 +26,5 @@ func (uc *BookUsecase) SearchBook(queryString string) ([]Book, error) {
 	return uc.repo.SearchBook(queryString)
 }
 func (uc *BookUsecase) CreateBook(b *Book) (Book, error) {
-	return uc.CreateBook(b)
+	return uc.repo.CreateBook(b)
 }
