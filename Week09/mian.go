@@ -45,7 +45,7 @@ func handleConn(conn net.Conn) {
 func echo(conn net.Conn, c <-chan string) {
 	wr := bufio.NewWriter(conn)
 	for msg := range c {
-		if msg == "q" {
+		if msg == "q!" {
 			wr.WriteString(strings.Join([]string{"echo~: ", "bye~", "\n"}, ""))
 			wr.Flush()
 			conn.Close()
